@@ -5,6 +5,7 @@ import android.animation.ObjectAnimator
 import android.animation.PropertyValuesHolder
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.drawable.GradientDrawable
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
@@ -35,6 +36,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var splashView: View
     private lateinit var offlineView: View
     private lateinit var splashLogo: ImageView
+    private lateinit var micButton: Button
+    private lateinit var infoButton: Button
+
+    private var isListening = false
 
     private val AUDIO_PERMISSION_REQUEST = 1001
     private val APP_URL = "https://shyper-assistant.vercel.app"
@@ -48,6 +53,21 @@ class MainActivity : AppCompatActivity() {
         splashView = findViewById(R.id.splashView)
         offlineView = findViewById(R.id.offlineView)
         splashLogo = findViewById(R.id.splashLogo)
+        micButton = findViewById(R.id.micButton)
+        infoButton = findViewById(R.id.infoButton)
+
+        styleRoundButton(micButton, COLOR_MIC_OFF)
+        styleRoundButton(infoButton, COLOR_INFO)
+
+        micButton.setOnClickListener {
+            isListening = !isListening
+            styleRoundButton(micButton, if (isListening) COLOR_MIC_ON else COLOR_MIC_OFF)
+            webView.evaluateJavascript("document.querySelector('button').click()", null)
+        }
+
+        infoButton.setOnClickListener {
+            showAboutDialog()
+        }
 
         startSplashLogoAnimation()
         requestMicPermission()
@@ -69,6 +89,13 @@ class MainActivity : AppCompatActivity() {
                 webView.loadUrl(APP_URL)
             }
         }
+    }
+
+    private fun styleRoundButton(button: Button, color: Int) {
+        val drawable = GradientDrawable()
+        drawable.shape = GradientDrawable.OVAL
+        drawable.setColor(color)
+        button.background = drawable
     }
 
     private fun startSplashLogoAnimation() {
@@ -110,11 +137,19 @@ class MainActivity : AppCompatActivity() {
         settings.mediaPlaybackRequiresUserGesture = false
         settings.allowFileAccess = true
         settings.allowContentAccess = true
+        settings.userAgentString =
+            "Mozilla/5.0 (Linux; Android 13; POCO F3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36"
+        settings.cacheMode = WebSettings.LOAD_NO_CACHE
+
+        webView.clearCache(true)
+        webView.clearHistory()
 
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 dismissSplash()
+                micButton.visibility = View.VISIBLE
+                infoButton.visibility = View.VISIBLE
             }
 
             override fun onReceivedError(
@@ -142,7 +177,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun checkForUpdates() {
+    private fun showAboutDialog() {
+        val currentVersion = try {
+            packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
+        } catch (_: Exception) { "?" }
+
+        AlertDialog.Builder(this)
+            .setTitle("Jarvis v$currentVersion")
+            .setMessage("AI assistant powered by Vercel.\n\nTap below to check for a newer version.")
+            .setPositiveButton("Check for Update") { _, _ ->
+                checkForUpdates(showUpToDate = true)
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    private fun checkForUpdates(showUpToDate: Boolean = false) {
         Thread {
             try {
                 val conn = URL(RELEASES_API).openConnection() as HttpURLConnection
@@ -169,11 +219,27 @@ class MainActivity : AppCompatActivity() {
 
                     if (latestVersion.isNotEmpty() && isNewerVersion(latestVersion, currentVersion)) {
                         runOnUiThread { showUpdateDialog(latestVersion, downloadUrl) }
+                    } else if (showUpToDate) {
+                        runOnUiThread {
+                            AlertDialog.Builder(this)
+                                .setTitle("Up to Date")
+                                .setMessage("You have the latest version ($currentVersion).")
+                                .setPositiveButton("OK", null)
+                                .show()
+                        }
                     }
                 }
                 conn.disconnect()
             } catch (_: Exception) {
-                // Update check is non-critical; fail silently
+                if (showUpToDate) {
+                    runOnUiThread {
+                        AlertDialog.Builder(this)
+                            .setTitle("Update Check Failed")
+                            .setMessage("Could not reach GitHub. Please try again later.")
+                            .setPositiveButton("OK", null)
+                            .show()
+                    }
+                }
             }
         }.start()
     }
@@ -235,5 +301,11 @@ class MainActivity : AppCompatActivity() {
         } else {
             super.onBackPressed()
         }
+    }
+
+    companion object {
+        private const val COLOR_MIC_OFF = 0xFF616161.toInt()
+        private const val COLOR_MIC_ON = 0xFF4CAF50.toInt()
+        private const val COLOR_INFO = 0xFF7C3AED.toInt()
     }
 }
