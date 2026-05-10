@@ -5,14 +5,18 @@ import android.animation.ObjectAnimator
 import android.animation.PropertyValuesHolder
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.drawable.GradientDrawable
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import android.view.animation.DecelerateInterpolator
 import android.webkit.GeolocationPermissions
+import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -26,6 +30,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.google.android.material.floatingactionbutton.FloatingActionButton
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -36,10 +41,17 @@ class MainActivity : AppCompatActivity() {
     private lateinit var splashView: View
     private lateinit var offlineView: View
     private lateinit var splashLogo: ImageView
-    private lateinit var micButton: Button
+    private lateinit var micFab: FloatingActionButton
     private lateinit var infoButton: Button
 
     private var isListening = false
+
+    private val micTimeoutHandler = Handler(Looper.getMainLooper())
+    private val micTimeoutRunnable = Runnable {
+        isListening = false
+        micFab.backgroundTintList = ColorStateList.valueOf(COLOR_MIC_OFF)
+        webView.evaluateJavascript("window.stopListening && window.stopListening()", null)
+    }
 
     private val AUDIO_PERMISSION_REQUEST = 1001
     private val APP_URL = "https://shyper-assistant.vercel.app"
@@ -53,16 +65,18 @@ class MainActivity : AppCompatActivity() {
         splashView = findViewById(R.id.splashView)
         offlineView = findViewById(R.id.offlineView)
         splashLogo = findViewById(R.id.splashLogo)
-        micButton = findViewById(R.id.micButton)
+        micFab = findViewById(R.id.micFab)
         infoButton = findViewById(R.id.infoButton)
 
-        styleRoundButton(micButton, COLOR_MIC_OFF)
         styleRoundButton(infoButton, COLOR_INFO)
 
-        micButton.setOnClickListener {
-            isListening = !isListening
-            styleRoundButton(micButton, if (isListening) COLOR_MIC_ON else COLOR_MIC_OFF)
-            webView.evaluateJavascript("document.querySelector('button').click()", null)
+        micFab.setOnClickListener {
+            setListening(!isListening)
+            if (isListening) {
+                webView.evaluateJavascript("window.startListening && window.startListening()", null)
+            } else {
+                webView.evaluateJavascript("window.stopListening && window.stopListening()", null)
+            }
         }
 
         infoButton.setOnClickListener {
@@ -88,6 +102,17 @@ class MainActivity : AppCompatActivity() {
                 setupWebView()
                 webView.loadUrl(APP_URL)
             }
+        }
+    }
+
+    private fun setListening(active: Boolean) {
+        isListening = active
+        micFab.backgroundTintList = ColorStateList.valueOf(
+            if (active) COLOR_MIC_ON else COLOR_MIC_OFF
+        )
+        micTimeoutHandler.removeCallbacks(micTimeoutRunnable)
+        if (active) {
+            micTimeoutHandler.postDelayed(micTimeoutRunnable, 10_000L)
         }
     }
 
@@ -144,11 +169,13 @@ class MainActivity : AppCompatActivity() {
         webView.clearCache(true)
         webView.clearHistory()
 
+        webView.addJavascriptInterface(AppLauncher(), "AndroidLauncher")
+
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 dismissSplash()
-                micButton.visibility = View.VISIBLE
+                micFab.visibility = View.VISIBLE
                 infoButton.visibility = View.VISIBLE
             }
 
@@ -173,6 +200,58 @@ class MainActivity : AppCompatActivity() {
                 callback: GeolocationPermissions.Callback
             ) {
                 callback.invoke(origin, true, false)
+            }
+        }
+    }
+
+    inner class AppLauncher {
+        @JavascriptInterface
+        fun openYouTube(query: String) {
+            runOnUiThread {
+                try {
+                    val intent = Intent(Intent.ACTION_SEARCH)
+                    intent.setPackage("com.google.android.youtube")
+                    intent.putExtra("query", query)
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    val webIntent = Intent(
+                        Intent.ACTION_VIEW,
+                        Uri.parse("https://www.youtube.com/results?search_query=${Uri.encode(query)}")
+                    )
+                    startActivity(webIntent)
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun openCamera() {
+            runOnUiThread {
+                startActivity(Intent("android.media.action.IMAGE_CAPTURE"))
+            }
+        }
+
+        @JavascriptInterface
+        fun openWhatsApp() {
+            runOnUiThread {
+                try {
+                    startActivity(packageManager.getLaunchIntentForPackage("com.whatsapp")!!)
+                } catch (e: Exception) {}
+            }
+        }
+
+        @JavascriptInterface
+        fun openMaps(location: String) {
+            runOnUiThread {
+                startActivity(
+                    Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=${Uri.encode(location)}"))
+                )
+            }
+        }
+
+        @JavascriptInterface
+        fun openSettings() {
+            runOnUiThread {
+                startActivity(Intent(android.provider.Settings.ACTION_SETTINGS))
             }
         }
     }
@@ -301,6 +380,11 @@ class MainActivity : AppCompatActivity() {
         } else {
             super.onBackPressed()
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        micTimeoutHandler.removeCallbacks(micTimeoutRunnable)
     }
 
     companion object {
