@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#05030f">
@@ -68,15 +69,16 @@
         android:gravity="center"
         android:visibility="gone">
 
-        <ImageButton
-            android:id="@+id/micButton"
-            android:layout_width="80dp"
-            android:layout_height="80dp"
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/micFab"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
             android:src="@drawable/ic_mic"
-            android:background="@drawable/mic_button_bg"
-            android:scaleType="center"
             android:contentDescription="@string/mic_idle"
-            android:elevation="6dp" />
+            app:backgroundTint="#7c3aed"
+            app:fabSize="normal"
+            app:rippleColor="#9333ea"
+            android:elevation="8dp" />
 
         <TextView
             android:id="@+id/micLabel"

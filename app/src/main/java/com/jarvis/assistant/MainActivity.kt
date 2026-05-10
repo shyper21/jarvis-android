@@ -29,13 +29,13 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
-import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.google.android.material.floatingactionbutton.FloatingActionButton
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -48,7 +48,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var offlineView: View
     private lateinit var splashLogo: ImageView
     private lateinit var micContainer: View
-    private lateinit var micButton: ImageButton
+    private lateinit var micFab: FloatingActionButton
     private lateinit var micLabel: TextView
     private lateinit var tts: TextToSpeech
 
@@ -57,11 +57,12 @@ class MainActivity : AppCompatActivity() {
 
     private val AUDIO_PERMISSION_REQUEST = 1001
     private val APP_URL = "https://shyper-assistant.vercel.app"
-    private val RELEASES_API = "https://api.github.com/repos/shyper21/jarvis-android/releases/latest"
+    private val RELEASES_API =
+        "https://api.github.com/repos/shyper21/jarvis-android/releases/latest"
 
-    // ── TTS + listening state bridge ─────────────────────────────────────────
+    // ── TTS bridge — registered as window.AndroidTTS ──────────────────────────
 
-    inner class JarvisBridge {
+    inner class JarvisTTSBridge {
         @JavascriptInterface
         fun speak(text: String) {
             if (ttsReady && text.isNotBlank()) {
@@ -85,7 +86,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ── App launcher bridge ───────────────────────────────────────────────────
+    // ── App-launcher bridge — registered as window.AndroidLauncher ───────────
 
     inner class AndroidLauncher {
 
@@ -96,8 +97,10 @@ class MainActivity : AppCompatActivity() {
                 putExtra("query", query)
             }
             safeStart(app) {
-                Intent(Intent.ACTION_VIEW,
-                    Uri.parse("https://www.youtube.com/results?search_query=${Uri.encode(query)}"))
+                Intent(
+                    Intent.ACTION_VIEW,
+                    Uri.parse("https://www.youtube.com/results?search_query=${Uri.encode(query)}")
+                )
             }
         }
 
@@ -119,18 +122,20 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun openWhatsApp() = runOnUiThread {
             val wa = packageManager.getLaunchIntentForPackage("com.whatsapp")
-            safeStart(wa) {
-                Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/"))
-            }
+            safeStart(wa) { Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/")) }
         }
 
         @JavascriptInterface
         fun openMaps(location: String) = runOnUiThread {
-            val maps = Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=${Uri.encode(location)}"))
-                .apply { setPackage("com.google.android.apps.maps") }
+            val maps =
+                Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=${Uri.encode(location)}")).apply {
+                    setPackage("com.google.android.apps.maps")
+                }
             safeStart(maps) {
-                Intent(Intent.ACTION_VIEW,
-                    Uri.parse("https://maps.google.com/maps?q=${Uri.encode(location)}"))
+                Intent(
+                    Intent.ACTION_VIEW,
+                    Uri.parse("https://maps.google.com/maps?q=${Uri.encode(location)}")
+                )
             }
         }
 
@@ -141,17 +146,20 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun openApp(packageName: String) = runOnUiThread {
-            val intent = packageManager.getLaunchIntentForPackage(packageName) ?: return@runOnUiThread
+            val intent =
+                packageManager.getLaunchIntentForPackage(packageName) ?: return@runOnUiThread
             safeStart(intent) { null }
         }
 
         private fun safeStart(primary: Intent?, fallback: () -> Intent?) {
             try {
-                if (primary != null) { startActivity(primary); return }
+                if (primary != null) {
+                    startActivity(primary)
+                    return
+                }
             } catch (_: ActivityNotFoundException) {}
             try {
-                val fb = fallback()
-                if (fb != null) startActivity(fb)
+                fallback()?.let { startActivity(it) }
             } catch (_: ActivityNotFoundException) {}
         }
     }
@@ -167,32 +175,13 @@ class MainActivity : AppCompatActivity() {
         offlineView  = findViewById(R.id.offlineView)
         splashLogo   = findViewById(R.id.splashLogo)
         micContainer = findViewById(R.id.micContainer)
-        micButton    = findViewById(R.id.micButton)
+        micFab       = findViewById(R.id.micFab)
         micLabel     = findViewById(R.id.micLabel)
 
-        setupTts()
+        initTts()
         startSplashLogoAnimation()
         requestMicPermission()
-
-        // Push-to-talk: hold → start recording, release → stop and send
-        @Suppress("ClickableViewAccessibility")
-        micButton.setOnTouchListener { v, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                    setMicState(listening = true)
-                    webView.evaluateJavascript(
-                        "window.jarvisStartListening && window.jarvisStartListening()", null)
-                    true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    webView.evaluateJavascript(
-                        "window.jarvisStopListening && window.jarvisStopListening()", null)
-                    true
-                }
-                else -> false
-            }
-        }
+        wireMicButton()
 
         if (isOnline()) {
             setupWebView()
@@ -213,37 +202,63 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ── TTS setup ────────────────────────────────────────────────────────────
+    // ── TTS initialisation ────────────────────────────────────────────────────
 
-    private fun setupTts() {
+    private fun initTts() {
         tts = TextToSpeech(this) { status ->
             ttsReady = status == TextToSpeech.SUCCESS
             if (ttsReady) tts.language = Locale.US
         }
     }
 
-    // ── Mic button state ─────────────────────────────────────────────────────
+    // ── Push-to-talk wiring ───────────────────────────────────────────────────
+
+    @Suppress("ClickableViewAccessibility")
+    private fun wireMicButton() {
+        micFab.setOnTouchListener { v, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                    setMicState(listening = true)
+                    webView.evaluateJavascript(
+                        "window.jarvisStartListening && window.jarvisStartListening()", null
+                    )
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    webView.evaluateJavascript(
+                        "window.jarvisStopListening && window.jarvisStopListening()", null
+                    )
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    // ── Mic FAB visual state ──────────────────────────────────────────────────
 
     private fun setMicState(listening: Boolean) {
         micPulseAnimator?.cancel()
         micPulseAnimator = null
-        micButton.scaleX = 1f
-        micButton.scaleY = 1f
+        micFab.scaleX = 1f
+        micFab.scaleY = 1f
 
         if (listening) {
             micLabel.text = getString(R.string.mic_listening)
-            micButton.backgroundTintList =
+            micFab.backgroundTintList =
                 ColorStateList.valueOf(Color.parseColor("#a855f7"))
             val sx = PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.18f, 1f)
             val sy = PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.18f, 1f)
-            micPulseAnimator = ObjectAnimator.ofPropertyValuesHolder(micButton, sx, sy).apply {
-                duration     = 700
-                repeatCount  = ObjectAnimator.INFINITE
+            micPulseAnimator = ObjectAnimator.ofPropertyValuesHolder(micFab, sx, sy).apply {
+                duration    = 700
+                repeatCount = ObjectAnimator.INFINITE
                 start()
             }
         } else {
             micLabel.text = getString(R.string.mic_idle)
-            micButton.backgroundTintList = null
+            micFab.backgroundTintList =
+                ColorStateList.valueOf(Color.parseColor("#7c3aed"))
         }
     }
 
@@ -253,8 +268,8 @@ class MainActivity : AppCompatActivity() {
         val sx = PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.06f, 1f)
         val sy = PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.06f, 1f)
         ObjectAnimator.ofPropertyValuesHolder(splashLogo, sx, sy).apply {
-            duration    = 2000
-            repeatCount = ObjectAnimator.INFINITE
+            duration     = 2000
+            repeatCount  = ObjectAnimator.INFINITE
             interpolator = DecelerateInterpolator()
             start()
         }
@@ -285,15 +300,15 @@ class MainActivity : AppCompatActivity() {
     // ── WebView setup ─────────────────────────────────────────────────────────
 
     private fun setupWebView() {
-        webView.addJavascriptInterface(JarvisBridge(),    "Android")
+        webView.addJavascriptInterface(JarvisTTSBridge(), "AndroidTTS")
         webView.addJavascriptInterface(AndroidLauncher(), "AndroidLauncher")
 
         val settings: WebSettings = webView.settings
-        settings.javaScriptEnabled            = true
-        settings.domStorageEnabled            = true
+        settings.javaScriptEnabled                = true
+        settings.domStorageEnabled                = true
         settings.mediaPlaybackRequiresUserGesture = false
-        settings.allowFileAccess              = true
-        settings.allowContentAccess           = true
+        settings.allowFileAccess                  = true
+        settings.allowContentAccess               = true
 
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
@@ -304,7 +319,9 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onReceivedError(
-                view: WebView?, request: WebResourceRequest?, error: WebResourceError?
+                view: WebView?,
+                request: WebResourceRequest?,
+                error: WebResourceError?
             ) {
                 if (request?.isForMainFrame == true) showOfflineView()
             }
@@ -314,8 +331,10 @@ class MainActivity : AppCompatActivity() {
             override fun onPermissionRequest(request: PermissionRequest) {
                 request.grant(request.resources)
             }
+
             override fun onGeolocationPermissionsShowPrompt(
-                origin: String, callback: GeolocationPermissions.Callback
+                origin: String,
+                callback: GeolocationPermissions.Callback
             ) {
                 callback.invoke(origin, true, false)
             }
@@ -323,22 +342,24 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * JavaScript injected after every page load. Three responsibilities:
+     * JavaScript injected after every page load.
      *
-     * 1. Redirect window.speechSynthesis → Android.speak() (fixes silent WebView TTS).
-     * 2. Wrap SpeechRecognition to enable push-to-talk:
-     *    - .start() is blocked until jarvisStartListening() is called by the native button.
-     *    - .stop() is forwarded when jarvisStopListening() is called on button release.
-     *    - onend / onerror notify Android.onListeningEnded() to reset the button.
-     * 3. Intercept fetch() calls to the Groq API: if the user message contains
-     *    real-time keywords (price/weather/news/today/…), fetch a DuckDuckGo
-     *    instant-answer snippet and prepend it as a system context message.
+     * 1. Overrides window.speechSynthesis → AndroidTTS.speak() so Jarvis
+     *    responses are spoken via Android TextToSpeech (fixes silent WebView TTS).
+     *
+     * 2. Wraps SpeechRecognition for push-to-talk: auto-start is blocked;
+     *    jarvisStartListening() / jarvisStopListening() are called by the native
+     *    FAB on hold / release.  AndroidTTS.onListeningStarted/Ended() keep the
+     *    button animation in sync.
+     *
+     * 3. Intercepts fetch() calls to the Groq API and prepends a DuckDuckGo
+     *    instant-answer snippet when the user message contains real-time keywords.
      */
     private fun buildBridgeJs(): String = """
 (function() {
     'use strict';
 
-    /* ── 1. SPEECH SYNTHESIS → ANDROID TTS ─────────────────────────── */
+    /* ── 1. SPEECH SYNTHESIS → AndroidTTS.speak() ──────────────────── */
     window.speechSynthesis = (function() {
         var speaking = false;
         return {
@@ -348,8 +369,8 @@ class MainActivity : AppCompatActivity() {
             speak: function(utterance) {
                 if (!utterance) return;
                 speaking = true;
-                if (typeof Android !== 'undefined' && utterance.text) {
-                    Android.speak(utterance.text);
+                if (window.AndroidTTS && utterance.text) {
+                    window.AndroidTTS.speak(utterance.text);
                 }
                 if (utterance.onstart) try { utterance.onstart({}); } catch(e) {}
                 var words = (utterance.text || '').split(/\s+/).length;
@@ -361,7 +382,7 @@ class MainActivity : AppCompatActivity() {
             },
             cancel: function() {
                 speaking = false;
-                if (typeof Android !== 'undefined') Android.stopSpeaking();
+                if (window.AndroidTTS) window.AndroidTTS.stopSpeaking();
             },
             pause:               function() {},
             resume:              function() {},
@@ -374,15 +395,15 @@ class MainActivity : AppCompatActivity() {
     /* ── 2. SPEECH RECOGNITION — PUSH-TO-TALK ──────────────────────── */
     var NativeSR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (NativeSR) {
-        var _pendingTarget  = null;
+        var _pendingTarget   = null;
         var _listeningActive = false;
 
         function JarvisSR() {
             var inst = new NativeSR();
-            var proxy = new Proxy(inst, {
+            return new Proxy(inst, {
                 get: function(target, prop) {
                     if (prop === 'start') return function() {
-                        /* Block web-app auto-start; store for native button */
+                        /* Block web-app auto-start; hold for native button tap */
                         _pendingTarget = target;
                     };
                     if (prop === 'stop') return function() {
@@ -392,7 +413,7 @@ class MainActivity : AppCompatActivity() {
                         if (_listeningActive) {
                             _listeningActive = false;
                             target.abort();
-                            if (typeof Android !== 'undefined') Android.onListeningEnded();
+                            if (window.AndroidTTS) window.AndroidTTS.onListeningEnded();
                         }
                     };
                     var val = target[prop];
@@ -402,13 +423,13 @@ class MainActivity : AppCompatActivity() {
                     if (prop === 'onend') {
                         target.onend = function(e) {
                             _listeningActive = false;
-                            if (typeof Android !== 'undefined') Android.onListeningEnded();
+                            if (window.AndroidTTS) window.AndroidTTS.onListeningEnded();
                             if (typeof value === 'function') value.call(target, e);
                         };
                     } else if (prop === 'onerror') {
                         target.onerror = function(e) {
                             _listeningActive = false;
-                            if (typeof Android !== 'undefined') Android.onListeningEnded();
+                            if (window.AndroidTTS) window.AndroidTTS.onListeningEnded();
                             if (typeof value === 'function') value.call(target, e);
                         };
                     } else {
@@ -417,24 +438,24 @@ class MainActivity : AppCompatActivity() {
                     return true;
                 }
             });
-            return proxy;
         }
 
         window.SpeechRecognition       = JarvisSR;
         window.webkitSpeechRecognition = JarvisSR;
 
-        /* Native button hold → start recognition */
+        /* Called by native FAB on hold-down */
         window.jarvisStartListening = function() {
             if (_pendingTarget && !_listeningActive) {
                 _listeningActive = true;
                 _pendingTarget.start();
-                if (typeof Android !== 'undefined') Android.onListeningStarted();
+                if (window.AndroidTTS) window.AndroidTTS.onListeningStarted();
                 return;
             }
             /* Fallback: click the web app's own mic button if discoverable */
             var selectors = [
-                'button[aria-label*="mic" i]', 'button[aria-label*="voice" i]',
-                'button[aria-label*="speak" i]', 'button[aria-label*="listen" i]',
+                'button[aria-label*="mic" i]',
+                'button[aria-label*="voice" i]',
+                'button[aria-label*="speak" i]',
                 '[role="button"][aria-label*="mic" i]'
             ];
             for (var i = 0; i < selectors.length; i++) {
@@ -443,11 +464,11 @@ class MainActivity : AppCompatActivity() {
             }
         };
 
-        /* Native button release → stop and send transcript */
+        /* Called by native FAB on release */
         window.jarvisStopListening = function() {
             if (_pendingTarget && _listeningActive) {
                 _pendingTarget.stop();
-                /* _listeningActive reset happens in onend */
+                /* _listeningActive is cleared when onend fires */
             }
         };
     }
@@ -483,20 +504,15 @@ class MainActivity : AppCompatActivity() {
                 });
             }
             return parts.join(' | ');
-        } catch(e) {
-            return '';
-        }
+        } catch(e) { return ''; }
     }
 
     var _origFetch = window.fetch;
     window.fetch = async function(url, options) {
         var urlStr = typeof url === 'string' ? url : (url && url.url ? url.url : '');
-
-        /* Only intercept Groq API calls */
         if (urlStr.indexOf('groq.com') === -1) {
             return _origFetch(url, options);
         }
-
         try {
             var body = options && options.body ? JSON.parse(options.body) : null;
             if (body && body.messages) {
@@ -518,11 +534,10 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         } catch(e) {}
-
         return _origFetch(url, options);
     };
 
-    /* Push page content up so the native button does not overlap it */
+    /* Push page content up so the FAB does not overlap chat input */
     if (document.body) document.body.style.paddingBottom = '110px';
 })();
 """.trimIndent()
@@ -539,23 +554,19 @@ class MainActivity : AppCompatActivity() {
                 conn.readTimeout    = 6000
 
                 if (conn.responseCode == HttpURLConnection.HTTP_OK) {
-                    val body    = conn.inputStream.bufferedReader().readText()
-                    val json    = JSONObject(body)
+                    val body          = conn.inputStream.bufferedReader().readText()
+                    val json          = JSONObject(body)
                     val latestTag     = json.optString("tag_name", "")
                     val latestVersion = latestTag.removePrefix("v").trim()
-
-                    val assets      = json.optJSONArray("assets")
-                    val downloadUrl = if (assets != null && assets.length() > 0) {
+                    val assets        = json.optJSONArray("assets")
+                    val downloadUrl   = if (assets != null && assets.length() > 0) {
                         assets.getJSONObject(0).optString("browser_download_url", "")
                     } else {
                         json.optString("html_url", "")
                     }
-
                     val currentVersion =
                         packageManager.getPackageInfo(packageName, 0).versionName ?: "0"
-
-                    if (latestVersion.isNotEmpty() &&
-                        isNewerVersion(latestVersion, currentVersion)) {
+                    if (latestVersion.isNotEmpty() && isNewerVersion(latestVersion, currentVersion)) {
                         runOnUiThread { showUpdateDialog(latestVersion, downloadUrl) }
                     }
                 }
@@ -592,22 +603,31 @@ class MainActivity : AppCompatActivity() {
 
     private fun requestMicPermission() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-            == PackageManager.PERMISSION_GRANTED) return
+            == PackageManager.PERMISSION_GRANTED
+        ) return
 
         if (ActivityCompat.shouldShowRequestPermissionRationale(
-                this, Manifest.permission.RECORD_AUDIO)) {
+                this, Manifest.permission.RECORD_AUDIO
+            )
+        ) {
             AlertDialog.Builder(this)
                 .setTitle("Microphone Access")
                 .setMessage("Jarvis needs microphone access to hear your voice commands.")
                 .setPositiveButton("Allow") { _, _ ->
                     ActivityCompat.requestPermissions(
-                        this, arrayOf(Manifest.permission.RECORD_AUDIO), AUDIO_PERMISSION_REQUEST)
+                        this,
+                        arrayOf(Manifest.permission.RECORD_AUDIO),
+                        AUDIO_PERMISSION_REQUEST
+                    )
                 }
                 .setNegativeButton("Not now", null)
                 .show()
         } else {
             ActivityCompat.requestPermissions(
-                this, arrayOf(Manifest.permission.RECORD_AUDIO), AUDIO_PERMISSION_REQUEST)
+                this,
+                arrayOf(Manifest.permission.RECORD_AUDIO),
+                AUDIO_PERMISSION_REQUEST
+            )
         }
     }
 
