@@ -5,6 +5,6 @@
     <string name="offline_title">No Connection</string>
     <string name="offline_message">Jarvis requires an internet connection\nto listen and respond.</string>
     <string name="retry">Retry</string>
-    <string name="mic_idle">Tap to speak</string>
-    <string name="mic_listening">Listening…</string>
+    <string name="mic_idle">Hold to speak</string>
+    <string name="mic_listening">Recording…</string>
 </resources>
