@@ -57,6 +57,39 @@
 
     </LinearLayout>
 
+    <!-- Mic Button Overlay (tap-to-activate) -->
+    <LinearLayout
+        android:id="@+id/micContainer"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="40dp"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:visibility="gone">
+
+        <ImageButton
+            android:id="@+id/micButton"
+            android:layout_width="80dp"
+            android:layout_height="80dp"
+            android:src="@drawable/ic_mic"
+            android:background="@drawable/mic_button_bg"
+            android:scaleType="center"
+            android:contentDescription="@string/mic_idle"
+            android:elevation="6dp" />
+
+        <TextView
+            android:id="@+id/micLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/mic_idle"
+            android:textColor="#c4b5fd"
+            android:textSize="12sp"
+            android:fontFamily="sans-serif-light"
+            android:layout_marginTop="10dp" />
+
+    </LinearLayout>
+
     <!-- Splash Overlay -->
     <LinearLayout
         android:id="@+id/splashView"
