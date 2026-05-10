@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Jarvis</string>
+    <string name="splash_subtitle">AI Assistant</string>
+    <string name="offline_title">No Connection</string>
+    <string name="offline_message">Jarvis requires an internet connection\nto listen and respond.</string>
+    <string name="retry">Retry</string>
 </resources>

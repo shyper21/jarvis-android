@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="120dp"
+    android:height="120dp"
+    android:viewportWidth="120"
+    android:viewportHeight="120">
+
+    <!-- Dark background circle -->
+    <path
+        android:fillColor="#0d0520"
+        android:pathData="M60,4 A56,56 0 1,0 60,116 A56,56 0 1,0 60,4Z" />
+
+    <!-- Outer glow ring -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#9333ea"
+        android:strokeWidth="2"
+        android:pathData="M60,6 A54,54 0 1,0 60,114 A54,54 0 1,0 60,6Z" />
+
+    <!-- Inner accent ring -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#4c1d95"
+        android:strokeWidth="0.8"
+        android:pathData="M60,16 A44,44 0 1,0 60,104 A44,44 0 1,0 60,16Z" />
+
+    <!-- J - top horizontal bar -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#c4b5fd"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M44,32 L72,32" />
+
+    <!-- J - vertical stem -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#c4b5fd"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M60,32 L60,76" />
+
+    <!-- J - bottom curve -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#c4b5fd"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M60,76 Q60,94 46,94 Q36,94 36,84" />
+
+    <!-- Circuit node top-right -->
+    <path
+        android:fillColor="#9333ea"
+        android:pathData="M88,28 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0Z" />
+
+    <!-- Circuit node top-left -->
+    <path
+        android:fillColor="#9333ea"
+        android:pathData="M32,28 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0Z" />
+
+    <!-- Circuit node bottom-right -->
+    <path
+        android:fillColor="#7c3aed"
+        android:pathData="M88,92 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0Z" />
+
+    <!-- Circuit node bottom-left -->
+    <path
+        android:fillColor="#7c3aed"
+        android:pathData="M32,92 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0Z" />
+
+    <!-- Circuit line top-right to J -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#6d28d9"
+        android:strokeWidth="1.2"
+        android:pathData="M84,28 L76,28 L76,32" />
+
+    <!-- Circuit line top-left to J -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#6d28d9"
+        android:strokeWidth="1.2"
+        android:pathData="M36,28 L44,28 L44,32" />
+
+    <!-- Circuit line bottom-right -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#6d28d9"
+        android:strokeWidth="1.2"
+        android:pathData="M85,92 L72,92" />
+
+    <!-- Circuit line bottom-left -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#6d28d9"
+        android:strokeWidth="1.2"
+        android:pathData="M35,92 L42,92" />
+
+</vector>
