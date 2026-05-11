@@ -1,395 +1,306 @@
 package com.jarvis.assistant
 
 import android.Manifest
-import android.animation.ObjectAnimator
-import android.animation.PropertyValuesHolder
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.content.res.ColorStateList
-import android.graphics.drawable.GradientDrawable
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.MediaStore
+import android.provider.Settings
+import android.speech.tts.TextToSpeech
+import android.view.Gravity
 import android.view.View
-import android.view.animation.DecelerateInterpolator
-import android.webkit.GeolocationPermissions
-import android.webkit.JavascriptInterface
-import android.webkit.PermissionRequest
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceError
-import android.webkit.WebResourceRequest
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import android.widget.Button
-import android.widget.ImageView
-import androidx.appcompat.app.AlertDialog
+import android.webkit.*
+import android.widget.*
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import com.google.android.material.floatingactionbutton.FloatingActionButton
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
+import java.util.Locale
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
+
+    companion object {
+        const val APP_URL = "https://shyper-assistant.vercel.app"
+    }
 
     private lateinit var webView: WebView
-    private lateinit var splashView: View
-    private lateinit var offlineView: View
-    private lateinit var splashLogo: ImageView
-    private lateinit var micFab: FloatingActionButton
-    private lateinit var infoButton: Button
+    private lateinit var offlineView: LinearLayout
+    private lateinit var offlineText: TextView
+    private lateinit var retryButton: Button
+    private lateinit var tts: TextToSpeech
+    private var ttsReady = false
 
-    private var isListening = false
+    private val micPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> if (granted) webView.reload() }
 
-    private val micTimeoutHandler = Handler(Looper.getMainLooper())
-    private val micTimeoutRunnable = Runnable {
-        isListening = false
-        micFab.backgroundTintList = ColorStateList.valueOf(COLOR_MIC_OFF)
-        webView.evaluateJavascript("window.stopListening && window.stopListening()", null)
+    // ══════════════════════════════════════════════════════════════════════════
+    //  AndroidLauncher — jembatan JS → native Android
+    // ══════════════════════════════════════════════════════════════════════════
+    inner class AndroidLauncher {
+
+        @JavascriptInterface
+        fun openYouTube(query: String) = runOnUiThread {
+            val searchIntent = Intent(Intent.ACTION_SEARCH).apply {
+                setPackage("com.google.android.youtube")
+                putExtra("query", query)
+            }
+            if (searchIntent.resolveActivity(packageManager) != null) {
+                startActivity(searchIntent)
+            } else {
+                openUrl("https://www.youtube.com/results?search_query=${Uri.encode(query)}")
+            }
+        }
+
+        @JavascriptInterface
+        fun openCamera() = runOnUiThread {
+            val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+            if (intent.resolveActivity(packageManager) != null) startActivity(intent)
+        }
+
+        @JavascriptInterface
+        fun openWhatsApp() = runOnUiThread {
+            startActivity(
+                packageManager.getLaunchIntentForPackage("com.whatsapp")
+                    ?: Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/"))
+            )
+        }
+
+        @JavascriptInterface
+        fun openMaps(location: String) = runOnUiThread {
+            val mapsIntent = Intent(
+                Intent.ACTION_VIEW,
+                Uri.parse("google.navigation:q=${Uri.encode(location)}")
+            ).setPackage("com.google.android.apps.maps")
+
+            if (mapsIntent.resolveActivity(packageManager) != null) {
+                startActivity(mapsIntent)
+            } else {
+                openUrl("https://maps.google.com/?q=${Uri.encode(location)}")
+            }
+        }
+
+        @JavascriptInterface
+        fun openSettings() = runOnUiThread {
+            startActivity(Intent(Settings.ACTION_SETTINGS))
+        }
+
+        @JavascriptInterface
+        fun openUrl(url: String) = runOnUiThread {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        }
     }
 
-    private val AUDIO_PERMISSION_REQUEST = 1001
-    private val APP_URL = "https://shyper-assistant.vercel.app"
-    private val RELEASES_API = "https://api.github.com/repos/shyper21/jarvis-android/releases/latest"
+    // ══════════════════════════════════════════════════════════════════════════
+    //  AndroidTTS — TTS native Android (lebih natural dari browser)
+    // ══════════════════════════════════════════════════════════════════════════
+    inner class AndroidTTS {
 
+        @JavascriptInterface
+        fun speak(text: String) = runOnUiThread {
+            if (!ttsReady) return@runOnUiThread
+            webView.evaluateJavascript("window.speechSynthesis?.cancel()", null)
+            tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "jarvis")
+        }
+
+        @JavascriptInterface
+        fun stop() = runOnUiThread { if (ttsReady) tts.stop() }
+
+        @JavascriptInterface
+        fun isSpeaking(): Boolean = ttsReady && tts.isSpeaking
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  Lifecycle
+    // ══════════════════════════════════════════════════════════════════════════
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
+        buildLayout()
+        tts = TextToSpeech(this, this)
+        setupWebView()
+        if (isOnline()) loadApp() else showOffline()
+    }
 
-        webView = findViewById(R.id.webView)
-        splashView = findViewById(R.id.splashView)
-        offlineView = findViewById(R.id.offlineView)
-        splashLogo = findViewById(R.id.splashLogo)
-        micFab = findViewById(R.id.micFab)
-        infoButton = findViewById(R.id.infoButton)
+    override fun onDestroy() {
+        tts.shutdown()
+        webView.destroy()
+        super.onDestroy()
+    }
 
-        styleRoundButton(infoButton, COLOR_INFO)
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (webView.canGoBack()) webView.goBack() else super.onBackPressed()
+    }
 
-        micFab.setOnClickListener {
-            setListening(!isListening)
-            if (isListening) {
-                webView.evaluateJavascript("window.startListening && window.startListening()", null)
-            } else {
-                webView.evaluateJavascript("window.stopListening && window.stopListening()", null)
+    override fun onInit(status: Int) {
+        if (status == TextToSpeech.SUCCESS) {
+            val result = tts.setLanguage(Locale("id", "ID"))
+            if (result == TextToSpeech.LANG_MISSING_DATA ||
+                result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                tts.setLanguage(Locale.ENGLISH)
+            }
+            tts.setSpeechRate(0.95f)
+            tts.setPitch(0.85f)
+            ttsReady = true
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  WebView setup
+    // ══════════════════════════════════════════════════════════════════════════
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun setupWebView() {
+        webView.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            mediaPlaybackRequiresUserGesture = false
+            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            cacheMode = WebSettings.LOAD_DEFAULT
+            allowFileAccess = false
+            setSupportZoom(false)
+            displayZoomControls = false
+            useWideViewPort = true
+            loadWithOverviewMode = true
+        }
+
+        // Inject bridges ke JS
+        webView.addJavascriptInterface(AndroidLauncher(), "AndroidLauncher")
+        webView.addJavascriptInterface(AndroidTTS(), "AndroidTTS")
+
+        webView.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView, url: String) {
+                // Override browser speechSynthesis → pakai AndroidTTS native
+                view.evaluateJavascript("""
+                    (function() {
+                        if (window.AndroidTTS && window.SpeechSynthesisUtterance) {
+                            window.speechSynthesis.speak = function(utt) {
+                                AndroidTTS.speak(utt.text || '');
+                            };
+                        }
+                        console.log('[Jarvis] Android bridge ready');
+                    })();
+                """.trimIndent(), null)
+            }
+
+            override fun onReceivedError(
+                view: WebView, request: WebResourceRequest, error: WebResourceError
+            ) {
+                if (request.isForMainFrame) showOffline()
             }
         }
 
-        infoButton.setOnClickListener {
-            showAboutDialog()
-        }
-
-        startSplashLogoAnimation()
-        requestMicPermission()
-
-        if (isOnline()) {
-            setupWebView()
-            webView.loadUrl(APP_URL)
-            checkForUpdates()
-        } else {
-            showOfflineView()
-        }
-
-        findViewById<Button>(R.id.retryButton).setOnClickListener {
-            if (isOnline()) {
-                offlineView.visibility = View.GONE
-                splashView.visibility = View.VISIBLE
-                splashView.alpha = 1f
-                setupWebView()
-                webView.loadUrl(APP_URL)
+        webView.webChromeClient = object : WebChromeClient() {
+            // Izinkan mikrofon dari WebView
+            override fun onPermissionRequest(request: PermissionRequest) {
+                val toGrant = mutableListOf<String>()
+                if (PermissionRequest.RESOURCE_AUDIO_CAPTURE in request.resources) {
+                    if (ContextCompat.checkSelfPermission(
+                            this@MainActivity, Manifest.permission.RECORD_AUDIO
+                        ) == PackageManager.PERMISSION_GRANTED
+                    ) toGrant.add(PermissionRequest.RESOURCE_AUDIO_CAPTURE)
+                    else { micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO); request.deny(); return }
+                }
+                if (PermissionRequest.RESOURCE_VIDEO_CAPTURE in request.resources)
+                    toGrant.add(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+                if (toGrant.isNotEmpty()) request.grant(toGrant.toTypedArray()) else request.deny()
             }
+
+            // Izinkan geolokasi
+            override fun onGeolocationPermissionsShowPrompt(
+                origin: String, callback: GeolocationPermissions.Callback
+            ) = callback.invoke(origin, true, false)
         }
     }
 
-    private fun setListening(active: Boolean) {
-        isListening = active
-        micFab.backgroundTintList = ColorStateList.valueOf(
-            if (active) COLOR_MIC_ON else COLOR_MIC_OFF
-        )
-        micTimeoutHandler.removeCallbacks(micTimeoutRunnable)
-        if (active) {
-            micTimeoutHandler.postDelayed(micTimeoutRunnable, 10_000L)
-        }
+    // ══════════════════════════════════════════════════════════════════════════
+    //  Helpers
+    // ══════════════════════════════════════════════════════════════════════════
+    private fun loadApp() {
+        offlineView.visibility = View.GONE
+        webView.visibility = View.VISIBLE
+        webView.loadUrl(APP_URL)
     }
 
-    private fun styleRoundButton(button: Button, color: Int) {
-        val drawable = GradientDrawable()
-        drawable.shape = GradientDrawable.OVAL
-        drawable.setColor(color)
-        button.background = drawable
-    }
-
-    private fun startSplashLogoAnimation() {
-        val scaleX = PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.06f, 1f)
-        val scaleY = PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.06f, 1f)
-        ObjectAnimator.ofPropertyValuesHolder(splashLogo, scaleX, scaleY).apply {
-            duration = 2000
-            repeatCount = ObjectAnimator.INFINITE
-            interpolator = DecelerateInterpolator()
-            start()
-        }
-    }
-
-    private fun dismissSplash() {
-        splashView.animate()
-            .alpha(0f)
-            .setDuration(600)
-            .withEndAction { splashView.visibility = View.GONE }
-            .start()
-    }
-
-    private fun showOfflineView() {
-        splashView.visibility = View.GONE
+    private fun showOffline() = runOnUiThread {
         webView.visibility = View.GONE
         offlineView.visibility = View.VISIBLE
     }
 
     private fun isOnline(): Boolean {
         val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = cm.activeNetwork ?: return false
-        val caps = cm.getNetworkCapabilities(network) ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-    }
-
-    private fun setupWebView() {
-        val settings: WebSettings = webView.settings
-        settings.javaScriptEnabled = true
-        settings.domStorageEnabled = true
-        settings.mediaPlaybackRequiresUserGesture = false
-        settings.allowFileAccess = true
-        settings.allowContentAccess = true
-        settings.userAgentString =
-            "Mozilla/5.0 (Linux; Android 13; POCO F3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36"
-        settings.cacheMode = WebSettings.LOAD_NO_CACHE
-
-        webView.clearCache(true)
-        webView.clearHistory()
-
-        webView.addJavascriptInterface(AppLauncher(), "AndroidLauncher")
-
-        webView.webViewClient = object : WebViewClient() {
-            override fun onPageFinished(view: WebView?, url: String?) {
-                super.onPageFinished(view, url)
-                dismissSplash()
-                micFab.visibility = View.VISIBLE
-                infoButton.visibility = View.VISIBLE
-            }
-
-            override fun onReceivedError(
-                view: WebView?,
-                request: WebResourceRequest?,
-                error: WebResourceError?
-            ) {
-                if (request?.isForMainFrame == true) {
-                    showOfflineView()
-                }
-            }
-        }
-
-        webView.webChromeClient = object : WebChromeClient() {
-            override fun onPermissionRequest(request: PermissionRequest) {
-                request.grant(request.resources)
-            }
-
-            override fun onGeolocationPermissionsShowPrompt(
-                origin: String,
-                callback: GeolocationPermissions.Callback
-            ) {
-                callback.invoke(origin, true, false)
-            }
-        }
-    }
-
-    inner class AppLauncher {
-        @JavascriptInterface
-        fun openYouTube(query: String) {
-            runOnUiThread {
-                try {
-                    val intent = Intent(Intent.ACTION_SEARCH)
-                    intent.setPackage("com.google.android.youtube")
-                    intent.putExtra("query", query)
-                    startActivity(intent)
-                } catch (e: Exception) {
-                    val webIntent = Intent(
-                        Intent.ACTION_VIEW,
-                        Uri.parse("https://www.youtube.com/results?search_query=${Uri.encode(query)}")
-                    )
-                    startActivity(webIntent)
-                }
-            }
-        }
-
-        @JavascriptInterface
-        fun openCamera() {
-            runOnUiThread {
-                startActivity(Intent("android.media.action.IMAGE_CAPTURE"))
-            }
-        }
-
-        @JavascriptInterface
-        fun openWhatsApp() {
-            runOnUiThread {
-                try {
-                    startActivity(packageManager.getLaunchIntentForPackage("com.whatsapp")!!)
-                } catch (e: Exception) {}
-            }
-        }
-
-        @JavascriptInterface
-        fun openMaps(location: String) {
-            runOnUiThread {
-                startActivity(
-                    Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=${Uri.encode(location)}"))
-                )
-            }
-        }
-
-        @JavascriptInterface
-        fun openSettings() {
-            runOnUiThread {
-                startActivity(Intent(android.provider.Settings.ACTION_SETTINGS))
-            }
-        }
-    }
-
-    private fun showAboutDialog() {
-        val currentVersion = try {
-            packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
-        } catch (_: Exception) { "?" }
-
-        AlertDialog.Builder(this)
-            .setTitle("Jarvis v$currentVersion")
-            .setMessage("AI assistant powered by Vercel.\n\nTap below to check for a newer version.")
-            .setPositiveButton("Check for Update") { _, _ ->
-                checkForUpdates(showUpToDate = true)
-            }
-            .setNegativeButton("Close", null)
-            .show()
-    }
-
-    private fun checkForUpdates(showUpToDate: Boolean = false) {
-        Thread {
-            try {
-                val conn = URL(RELEASES_API).openConnection() as HttpURLConnection
-                conn.requestMethod = "GET"
-                conn.setRequestProperty("Accept", "application/vnd.github.v3+json")
-                conn.connectTimeout = 6000
-                conn.readTimeout = 6000
-
-                if (conn.responseCode == HttpURLConnection.HTTP_OK) {
-                    val body = conn.inputStream.bufferedReader().readText()
-                    val json = JSONObject(body)
-                    val latestTag = json.optString("tag_name", "")
-                    val latestVersion = latestTag.removePrefix("v").trim()
-
-                    val assets = json.optJSONArray("assets")
-                    val downloadUrl = if (assets != null && assets.length() > 0) {
-                        assets.getJSONObject(0).optString("browser_download_url", "")
-                    } else {
-                        json.optString("html_url", "")
-                    }
-
-                    val currentVersion = packageManager
-                        .getPackageInfo(packageName, 0).versionName ?: "0"
-
-                    if (latestVersion.isNotEmpty() && isNewerVersion(latestVersion, currentVersion)) {
-                        runOnUiThread { showUpdateDialog(latestVersion, downloadUrl) }
-                    } else if (showUpToDate) {
-                        runOnUiThread {
-                            AlertDialog.Builder(this)
-                                .setTitle("Up to Date")
-                                .setMessage("You have the latest version ($currentVersion).")
-                                .setPositiveButton("OK", null)
-                                .show()
-                        }
-                    }
-                }
-                conn.disconnect()
-            } catch (_: Exception) {
-                if (showUpToDate) {
-                    runOnUiThread {
-                        AlertDialog.Builder(this)
-                            .setTitle("Update Check Failed")
-                            .setMessage("Could not reach GitHub. Please try again later.")
-                            .setPositiveButton("OK", null)
-                            .show()
-                    }
-                }
-            }
-        }.start()
-    }
-
-    private fun isNewerVersion(latest: String, current: String): Boolean {
-        val l = latest.split(".").map { it.toIntOrNull() ?: 0 }
-        val c = current.split(".").map { it.toIntOrNull() ?: 0 }
-        for (i in 0 until maxOf(l.size, c.size)) {
-            val lv = l.getOrElse(i) { 0 }
-            val cv = c.getOrElse(i) { 0 }
-            if (lv > cv) return true
-            if (lv < cv) return false
-        }
-        return false
-    }
-
-    private fun showUpdateDialog(version: String, downloadUrl: String) {
-        AlertDialog.Builder(this)
-            .setTitle("Update Available")
-            .setMessage("Jarvis v$version is available. Would you like to update now?")
-            .setPositiveButton("Update") { _, _ ->
-                if (downloadUrl.isNotEmpty()) {
-                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(downloadUrl)))
-                }
-            }
-            .setNegativeButton("Later", null)
-            .show()
-    }
-
-    private fun requestMicPermission() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-            == PackageManager.PERMISSION_GRANTED) return
-
-        if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.RECORD_AUDIO)) {
-            AlertDialog.Builder(this)
-                .setTitle("Microphone Access")
-                .setMessage("Jarvis needs microphone access to hear your voice commands.")
-                .setPositiveButton("Allow") { _, _ ->
-                    ActivityCompat.requestPermissions(
-                        this,
-                        arrayOf(Manifest.permission.RECORD_AUDIO),
-                        AUDIO_PERMISSION_REQUEST
-                    )
-                }
-                .setNegativeButton("Not now", null)
-                .show()
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val caps = cm.getNetworkCapabilities(cm.activeNetwork ?: return false) ?: return false
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
         } else {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.RECORD_AUDIO),
-                AUDIO_PERMISSION_REQUEST
+            @Suppress("DEPRECATION")
+            cm.activeNetworkInfo?.isConnected == true
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  Layout (programmatic — tidak perlu ubah XML yang sudah ada)
+    // ══════════════════════════════════════════════════════════════════════════
+    private fun buildLayout() {
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(0xFF05030F.toInt())
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
             )
         }
-    }
 
-    override fun onBackPressed() {
-        if (webView.canGoBack()) {
-            webView.goBack()
-        } else {
-            super.onBackPressed()
+        webView = WebView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
         }
-    }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        micTimeoutHandler.removeCallbacks(micTimeoutRunnable)
-    }
+        offlineView = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            visibility = View.GONE
+            setBackgroundColor(0xFF05030F.toInt())
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
 
-    companion object {
-        private const val COLOR_MIC_OFF = 0xFF616161.toInt()
-        private const val COLOR_MIC_ON = 0xFF4CAF50.toInt()
-        private const val COLOR_INFO = 0xFF7C3AED.toInt()
+        offlineText = TextView(this).apply {
+            text = "⚡ Tidak ada koneksi internet"
+            setTextColor(0xFFC77DFF.toInt())
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setPadding(32, 0, 32, 24)
+        }
+
+        retryButton = Button(this).apply {
+            text = "Coba Lagi"
+            setTextColor(0xFFFFFFFF.toInt())
+            setBackgroundColor(0xFF7C3AED.toInt())
+            setPadding(64, 24, 64, 24)
+            setOnClickListener {
+                if (isOnline()) loadApp()
+                else {
+                    offlineText.text = "Masih tidak ada koneksi..."
+                    Handler(Looper.getMainLooper()).postDelayed(
+                        { offlineText.text = "⚡ Tidak ada koneksi internet" }, 2000
+                    )
+                }
+            }
+        }
+
+        offlineView.addView(offlineText)
+        offlineView.addView(retryButton)
+        root.addView(webView)
+        root.addView(offlineView)
+        setContentView(root)
     }
 }
