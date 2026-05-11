@@ -33,9 +33,20 @@ jobs:
       - name: Get version from build.gradle
         id: version
         run: |
-          VERSION=$(grep 'versionName' app/build.gradle | sed 's/.*"\(.*\)".*/\1/' | tr -d ' ')
+          # Coba berbagai format versionName yang mungkin ada di build.gradle
+          VERSION=$(grep -m1 'versionName' app/build.gradle \
+            | grep -o '"[^"]*"' \
+            | tr -d '"' \
+            | tr -d ' ')
+          
+          # Fallback ke "1.0" kalau gagal ekstrak
+          if [ -z "$VERSION" ]; then
+            VERSION="1.0"
+            echo "⚠️ versionName tidak ditemukan, pakai fallback: $VERSION"
+          fi
+          
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Version: $VERSION"
+          echo "✅ Version: $VERSION"
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug
@@ -44,34 +55,35 @@ jobs:
         run: |
           mv app/build/outputs/apk/debug/app-debug.apk \
              app/build/outputs/apk/debug/Jarvis-v${{ steps.version.outputs.version }}.apk
+          echo "✅ APK renamed to Jarvis-v${{ steps.version.outputs.version }}.apk"
 
-      - name: Delete existing release if exists
+      - name: Delete existing release and tag if exists
         run: |
-          gh release delete v${{ steps.version.outputs.version }} --yes || true
-          git push --delete origin v${{ steps.version.outputs.version }} || true
+          gh release delete "v${{ steps.version.outputs.version }}" --yes 2>/dev/null || echo "No existing release"
+          git push --delete origin "v${{ steps.version.outputs.version }}" 2>/dev/null || echo "No existing tag"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create GitHub Release with APK
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ steps.version.outputs.version }}
           name: "Jarvis v${{ steps.version.outputs.version }}"
+          token: ${{ secrets.GITHUB_TOKEN }}
           body: |
-            ## Jarvis AI Assistant v${{ steps.version.outputs.version }}
-            
-            ### Download
-            Tap **Jarvis-v${{ steps.version.outputs.version }}.apk** below to download and install.
-            
-            ### Whats new
-            - Auto-update support
-            - App launcher (YouTube, Camera, Maps, WhatsApp)
-            - Mic toggle button
-            - Offline detection
-            - Splash screen
+            ## 🤖 Jarvis AI Assistant v${{ steps.version.outputs.version }}
+
+            ### 📥 Download & Install
+            1. Tap **Jarvis-v${{ steps.version.outputs.version }}.apk** di bawah
+            2. Aktifkan **"Install from Unknown Sources"** di Settings Android
+            3. Install dan buka Jarvis!
+
+            ### ✨ Fitur
+            - 🎙️ Push-to-talk voice command
+            - 📱 Buka YouTube, Maps, WhatsApp, Kamera, Settings via suara
+            - 🔊 TTS native Android (suara lebih natural)
+            - 📶 Deteksi offline + tombol Retry
+            - 🧠 AI memory via Nanobot (sinkron dengan Telegram)
           files: app/build/outputs/apk/debug/Jarvis-v${{ steps.version.outputs.version }}.apk
-          make_latest: true
           draft: false
           prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
